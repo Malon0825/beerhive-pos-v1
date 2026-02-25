@@ -1,0 +1,8 @@
+{
+  "buildCommand": "next build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "regions": ["sin1"],
+  "cleanUrls": true,
+  "trailingSlash": false
+}
