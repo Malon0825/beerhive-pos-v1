@@ -1,0 +1,598 @@
+// @ts-nocheck - Supabase query result type inference issues
+'use client';
+
+/**
+ * Reports Dashboard Component
+ * Main dashboard for viewing sales, inventory, and customer reports
+ */
+
+import { useState, useEffect } from 'react';
+import dynamic from 'next/dynamic';
+import { DateRangeFilter, DatePeriod } from './DateRangeFilter';
+import { TopProductsTable } from './TopProductsTable';
+import { ExportReportButton } from './ExportReportButton';
+import { ExcelExportButton, ExcelExportMultiSheet } from './ExcelExportButton';
+import { ExcelHeader } from '@/core/services/export/ExcelExportService';
+import { DollarSign, ShoppingCart, Users, TrendingUp, Package, AlertTriangle, BarChart3, LineChart } from 'lucide-react';
+import { LoadingSkeleton } from '@/components/loading/LoadingSkeleton';
+
+/**
+ * Dynamically import SalesChart to reduce initial bundle size
+ * Recharts is a heavy library (~200KB) and only needed for visualizations
+ */
+const SalesChart = dynamic(
+  () => import('./SalesChart').then(mod => ({ default: mod.SalesChart })),
+  {
+    loading: () => (
+      <div className="bg-white p-6 rounded-lg shadow-sm">
+        <LoadingSkeleton className="h-6 w-48 mb-4" />
+        <LoadingSkeleton className="h-64 w-full" />
+      </div>
+    ),
+    ssr: false,
+  }
+);
+
+// Chart type for toggling between line and bar
+type ChartType = 'line' | 'bar';
+
+interface DashboardData {
+  sales: any;
+  inventory: any;
+  customers: any;
+}
+
+export function ReportsDashboard() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState({ startDate: '', endDate: '', period: 'week' as DatePeriod });
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [chartType, setChartType] = useState<ChartType>('bar');
+  const [combinePackageView, setCombinePackageView] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [enterFrom, setEnterFrom] = useState<'left' | 'right'>('right');
+  const [enterAnim, setEnterAnim] = useState(false);
+
+  const fetchReports = async (startDate: string, endDate: string, period: DatePeriod) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // URL-encode dates to preserve special characters like + in timezone offsets
+      const encodedStart = encodeURIComponent(startDate);
+      const encodedEnd = encodeURIComponent(endDate);
+      
+      const [salesRes, inventoryRes, customersRes] = await Promise.all([
+        fetch(`/api/reports/sales?type=comprehensive&startDate=${encodedStart}&endDate=${encodedEnd}`),
+        fetch(`/api/reports/inventory?type=summary&startDate=${encodedStart}&endDate=${encodedEnd}`),
+        fetch(`/api/reports/customers?type=summary&startDate=${encodedStart}&endDate=${encodedEnd}`),
+      ]);
+
+      if (!salesRes.ok || !inventoryRes.ok || !customersRes.ok) {
+        throw new Error('Failed to fetch reports');
+      }
+
+      const [sales, inventory, customers] = await Promise.all([
+        salesRes.json(),
+        inventoryRes.json(),
+        customersRes.json(),
+      ]);
+
+      setDashboardData({
+        sales: sales.data,
+        inventory: inventory.data,
+        customers: customers.data,
+      });
+    } catch (err: any) {
+      setError(err.message || 'An error occurred while fetching reports');
+      console.error('Reports fetch error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDateRangeChange = (startDate: string, endDate: string, period: DatePeriod) => {
+    setDateRange({ startDate, endDate, period });
+    fetchReports(startDate, endDate, period);
+  };
+
+  useEffect(() => {
+    // Initialize with default week period aligned to business hours
+    // Business operates 5pm to 5pm next day
+    // Last 7 Days = 5pm 8 days ago to 5pm today
+    // 
+    // Timezone Fix (v1.0.3): Append explicit timezone to prevent PostgreSQL misinterpretation
+    const formatLocalDateTime = (date: Date): string => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+08:00`;
+    };
+    
+    const endDate = new Date();
+    endDate.setHours(17, 0, 0, 0); // 5pm today
+    
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 8);
+    startDate.setHours(17, 0, 0, 0); // 5pm 8 days ago
+    
+    handleDateRangeChange(formatLocalDateTime(startDate), formatLocalDateTime(endDate), 'week');
+  }, []);
+
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('en-PH', {
+      style: 'currency',
+      currency: 'PHP',
+      minimumFractionDigits: 0,
+    }).format(value);
+  };
+
+  const formatNumber = (value: number) => {
+    return new Intl.NumberFormat('en-PH').format(value);
+  };
+
+  // Compute total net income from standalone all products sold (individual products only)
+  const netIncomeTotal = (() => {
+    const items = (dashboardData?.sales?.all_products_sold_standalone || dashboardData?.sales?.all_products_sold || []) as any[];
+    return items.reduce((sum, it) => sum + (typeof it?.net_income === 'number' ? it.net_income : 0), 0);
+  })();
+
+  /**
+   * Define Excel headers for sales data export
+   */
+  const salesHeaders: ExcelHeader[] = [
+    { key: 'date', label: 'Date', width: 12, format: 'date' },
+    { key: 'total_revenue', label: 'Revenue', width: 15, format: 'currency' },
+    { key: 'transaction_count', label: 'Orders', width: 10, format: 'number' },
+    { key: 'average_transaction', label: 'Avg Order Value', width: 15, format: 'currency' },
+  ];
+
+  /**
+   * Define Excel headers for top products export
+   */
+  const productsHeaders: ExcelHeader[] = [
+    { key: 'product_name', label: 'Product Name', width: 25 },
+    { key: 'quantity_sold', label: 'Quantity Sold', width: 15, format: 'number' },
+    { key: 'total_revenue', label: 'Revenue', width: 15, format: 'currency' },
+  ];
+
+  const allProductsHeaders: ExcelHeader[] = [
+    { key: 'product_name', label: 'Product Name', width: 25 },
+    { key: 'total_quantity', label: 'Quantity Sold', width: 15, format: 'number' },
+    { key: 'total_revenue', label: 'Revenue', width: 15, format: 'currency' },
+    { key: 'net_income', label: 'Net Income', width: 15, format: 'currency' },
+    { key: 'order_count', label: 'Orders', width: 12, format: 'number' },
+  ];
+
+  const allProductsCombinedHeaders: ExcelHeader[] = [
+    { key: 'product_name', label: 'Product Name', width: 25 },
+    { key: 'total_quantity', label: 'Quantity Sold', width: 15, format: 'number' },
+    { key: 'order_count', label: 'Orders', width: 12, format: 'number' },
+  ];
+
+  /**
+   * Define Excel headers for categories export
+   */
+  const categoriesHeaders: ExcelHeader[] = [
+    { key: 'category_name', label: 'Category', width: 20 },
+    { key: 'total_revenue', label: 'Revenue', width: 15, format: 'currency' },
+    { key: 'product_count', label: 'Products', width: 12, format: 'number' },
+  ];
+
+  /**
+   * Define Excel headers for payment methods export
+   */
+  const paymentHeaders: ExcelHeader[] = [
+    { key: 'payment_method', label: 'Payment Method', width: 20 },
+    { key: 'total_amount', label: 'Total Amount', width: 15, format: 'currency' },
+    { key: 'count', label: 'Transaction Count', width: 15, format: 'number' },
+  ];
+
+  /**
+   * Define Excel headers for cashiers export
+   */
+  const cashiersHeaders: ExcelHeader[] = [
+    { key: 'cashier_name', label: 'Cashier Name', width: 25 },
+    { key: 'total_sales', label: 'Total Sales', width: 15, format: 'currency' },
+    { key: 'transaction_count', label: 'Transactions', width: 15, format: 'number' },
+  ];
+
+  if (error) {
+    return (
+      <div className="p-6 bg-red-50 border border-red-200 rounded-lg">
+        <p className="text-red-800">Error loading reports: {error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Reports & Analytics</h1>
+          <p className="text-gray-600 mt-1">Comprehensive business insights and metrics</p>
+        </div>
+        
+        {/* Export Buttons */}
+        {dashboardData && (
+          <div className="flex gap-3">
+            {/* CSV Export */}
+            <ExportReportButton 
+              data={dashboardData?.sales.daily_sales || []} 
+              filename="sales_report"
+            />
+            
+            {/* Excel Single Sheet Export */}
+            <ExcelExportButton
+              data={dashboardData?.sales.daily_sales || []}
+              filename="sales_report"
+              headers={salesHeaders}
+              sheetName="Daily Sales"
+              formatting={{
+                totalsRow: true,
+                alternateRows: true
+              }}
+            />
+            
+            {/* Excel Multi-Sheet Export */}
+            <ExcelExportMultiSheet
+              sheets={[
+                {
+                  name: 'Sales Summary',
+                  data: dashboardData?.sales.daily_sales || [],
+                  headers: salesHeaders,
+                  formatting: { totalsRow: true }
+                },
+                {
+                  name: combinePackageView ? 'All Products Sold (Combined)' : 'All Products Sold (Standalone)',
+                  data: combinePackageView
+                    ? (dashboardData?.sales.all_products_sold_combined || [])
+                    : (dashboardData?.sales.all_products_sold_standalone || dashboardData?.sales.all_products_sold || []),
+                  headers: combinePackageView ? allProductsCombinedHeaders : allProductsHeaders
+                },
+                {
+                  name: 'Categories',
+                  data: dashboardData?.sales.categories || [],
+                  headers: categoriesHeaders
+                },
+                {
+                  name: 'Payment Methods',
+                  data: dashboardData?.sales.payment_methods || [],
+                  headers: paymentHeaders
+                },
+                {
+                  name: 'Top Cashiers',
+                  data: dashboardData?.sales.cashiers || [],
+                  headers: cashiersHeaders
+                }
+              ]}
+              filename="comprehensive_report"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Date Range Filter */}
+      <DateRangeFilter
+        onDateRangeChange={handleDateRangeChange}
+        defaultPeriod="week"
+      />
+
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+      ) : dashboardData ? (
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+            {/* Total Revenue */}
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Revenue</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-2">
+                    {formatCurrency(dashboardData.sales.summary.total_revenue || 0)}
+                  </p>
+                </div>
+                <div className="p-3 bg-blue-100 rounded-lg">
+                  <DollarSign className="w-6 h-6 text-blue-600" />
+                </div>
+              </div>
+              <p className="text-sm text-gray-600 mt-4">
+                Avg: {formatCurrency(dashboardData.sales.summary.average_transaction_value || 0)}
+              </p>
+            </div>
+
+            {/* Net Income */}
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Net Income</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-2">
+                    {formatCurrency(netIncomeTotal || 0)}
+                  </p>
+                </div>
+                <div className="p-3 bg-indigo-100 rounded-lg">
+                  <TrendingUp className="w-6 h-6 text-indigo-600" />
+                </div>
+              </div>
+              <p className="text-sm text-gray-600 mt-4">Set cost price for accurate net income</p>
+            </div>
+
+            {/* Total Transactions */}
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Orders</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-2">
+                    {formatNumber(dashboardData.sales.summary.total_transactions || 0)}
+                  </p>
+                </div>
+                <div className="p-3 bg-green-100 rounded-lg">
+                  <ShoppingCart className="w-6 h-6 text-green-600" />
+                </div>
+              </div>
+              <p className="text-sm text-gray-600 mt-4">
+                Discounts: {formatCurrency(dashboardData.sales.summary.total_discounts || 0)}
+              </p>
+            </div>
+
+            {/* Active Customers */}
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Active Customers</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-2">
+                    {formatNumber(dashboardData.customers.active_customers || 0)}
+                  </p>
+                </div>
+                <div className="p-3 bg-purple-100 rounded-lg">
+                  <Users className="w-6 h-6 text-purple-600" />
+                </div>
+              </div>
+              <p className="text-sm text-gray-600 mt-4">
+                VIP: {formatNumber(dashboardData.customers.vip_customers || 0)}
+              </p>
+            </div>
+
+            {/* Inventory Status */}
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Products</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-2">
+                    {formatNumber(dashboardData.inventory.total_products || 0)}
+                  </p>
+                </div>
+                <div className="p-3 bg-orange-100 rounded-lg">
+                  <Package className="w-6 h-6 text-orange-600" />
+                </div>
+              </div>
+              <p className="text-sm text-red-600 mt-4 flex items-center gap-1">
+                <AlertTriangle className="w-4 h-4" />
+                Low Stock: {formatNumber(dashboardData.inventory.low_stock_count || 0)}
+              </p>
+            </div>
+          </div>
+
+          {/* Sales Chart */}
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Sales Trend</h3>
+              
+              {/* Chart Type Toggle */}
+              <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setChartType('bar')}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    chartType === 'bar'
+                      ? 'bg-white text-blue-600 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  title="Bar Chart - Easier to compare values"
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  Bar
+                </button>
+                <button
+                  onClick={() => setChartType('line')}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    chartType === 'line'
+                      ? 'bg-white text-blue-600 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  title="Line Chart - Shows trends over time"
+                >
+                  <LineChart className="w-4 h-4" />
+                  Line
+                </button>
+              </div>
+            </div>
+            
+            <SalesChart
+              data={dashboardData.sales.daily_sales || []}
+              chartType={chartType}
+              title=""
+              showTrend={false}
+            />
+          </div>
+
+          <TopProductsTable
+            key={combinePackageView ? 'combined' : 'standalone'}
+            products={
+              combinePackageView
+                ? (dashboardData.sales.all_products_sold_combined || [])
+                : (dashboardData.sales.all_products_sold_standalone || dashboardData.sales.all_products_sold || [])
+            }
+            title="All Products Sold"
+            hideRevenue={combinePackageView}
+            switching={isSwitching}
+            enterFrom={enterFrom}
+            enterAnim={enterAnim}
+            rightActions={
+              <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => {
+                    if (!combinePackageView) return;
+                    setIsSwitching(true);
+                    setTimeout(() => {
+                      setCombinePackageView(false);
+                      setEnterFrom('right');
+                      setEnterAnim(true);
+                      setIsSwitching(false);
+                      setTimeout(() => setEnterAnim(false), 10);
+                    }, 150);
+                  }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    !combinePackageView ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  title="Treat packages as single items"
+                >
+                  Standalone
+                </button>
+                <button
+                  onClick={() => {
+                    if (combinePackageView) return;
+                    setIsSwitching(true);
+                    setTimeout(() => {
+                      setCombinePackageView(true);
+                      setEnterFrom('left');
+                      setEnterAnim(true);
+                      setIsSwitching(false);
+                      setTimeout(() => setEnterAnim(false), 10);
+                    }, 150);
+                  }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    combinePackageView ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  title="Combine package components with products (no revenue)"
+                >
+                  Combined
+                </button>
+              </div>
+            }
+            limit={(
+              combinePackageView
+                ? (dashboardData.sales.all_products_sold_combined || [])
+                : (dashboardData.sales.all_products_sold_standalone || dashboardData.sales.all_products_sold || [])
+            ).length}
+          />
+
+          {/* Sales by Category */}
+          <div className="bg-white rounded-lg shadow-sm border">
+            <div className="p-6 border-b">
+              <h3 className="text-lg font-semibold text-gray-900">Sales by Category</h3>
+            </div>
+            <div className="p-6">
+              {dashboardData.sales.categories && dashboardData.sales.categories.length > 0 ? (
+                <div className="space-y-4">
+                  {dashboardData.sales.categories.slice(0, 5).map((cat: any, index: number) => (
+                    <div key={index}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium text-gray-900">
+                          {cat.category_name || 'Uncategorized'}
+                        </span>
+                        <span className="text-sm font-bold text-gray-900">
+                          {formatCurrency(cat.total_revenue || 0)}
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-600 h-2 rounded-full transition-all"
+                          style={{
+                            width: `${Math.min(
+                              (cat.total_revenue / dashboardData.sales.categories[0].total_revenue) * 100,
+                              100
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500 text-center py-8">No category data available</p>
+              )}
+            </div>
+          </div>
+
+          {/* Payment Methods and Cashier Performance */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Payment Methods */}
+            <div className="bg-white rounded-lg shadow-sm border">
+              <div className="p-6 border-b">
+                <h3 className="text-lg font-semibold text-gray-900">Payment Methods</h3>
+              </div>
+              <div className="p-6">
+                {dashboardData.sales.payment_methods && dashboardData.sales.payment_methods.length > 0 ? (
+                  <div className="space-y-3">
+                    {dashboardData.sales.payment_methods.map((pm: any, index: number) => (
+                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <span className="text-sm font-medium text-gray-700 capitalize">
+                          {pm.payment_method || 'Unknown'}
+                        </span>
+                        <div className="text-right">
+                          <div className="text-sm font-bold text-gray-900">
+                            {formatCurrency(pm.total_amount || 0)}
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            {formatNumber(pm.count || 0)} orders
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-500 text-center py-8">No payment data available</p>
+                )}
+              </div>
+            </div>
+
+            {/* Top Cashiers */}
+            <div className="bg-white rounded-lg shadow-sm border">
+              <div className="p-6 border-b">
+                <h3 className="text-lg font-semibold text-gray-900">Top Cashiers</h3>
+              </div>
+              <div className="p-6">
+                {dashboardData.sales.cashiers && dashboardData.sales.cashiers.length > 0 ? (
+                  <div className="space-y-3">
+                    {dashboardData.sales.cashiers.slice(0, 5).map((cashier: any, index: number) => (
+                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div className={`
+                            w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm
+                            ${index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : 'bg-orange-400'}
+                          `}>
+                            {index + 1}
+                          </div>
+                          <span className="text-sm font-medium text-gray-900">
+                            {cashier.cashier_name || 'Unknown'}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-bold text-gray-900">
+                            {formatCurrency(cashier.total_sales || 0)}
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            {formatNumber(cashier.transaction_count || 0)} orders
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-500 text-center py-8">No cashier data available</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
