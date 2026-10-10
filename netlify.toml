@@ -14,8 +14,9 @@
   # Node.js version requirement (must match package.json engines)
   NODE_VERSION = "18.17.0"
   
-  # Ignore command allows Netlify to skip builds when only docs/non-code files change
-  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- . ':!docs/' ':!*.md' ':!summary/'"
+  # Skip documentation-only previews only when a valid prior build is available.
+  # Production and fresh-cache builds must run so new releases can be published.
+  ignore = "node ./scripts/netlify-ignore-build.cjs"
 
 # Build environment variables
 [build.environment]
