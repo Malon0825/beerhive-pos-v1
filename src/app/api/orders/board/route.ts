@@ -59,28 +59,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Convert session map to array and fetch session details
-    const sessions = [];
-    for (const [sessionId, sessionData] of sessionMap) {
-      try {
-        const sessionInfo = await OrderSessionRepository.getById(sessionId);
-        sessions.push({
-          ...sessionData,
-          session_number: sessionInfo?.session_number || `SESSION-${sessionId.slice(0, 8)}`,
-          session_status: sessionInfo?.status || 'unknown',
-          session_opened_at: sessionInfo?.opened_at || sessionData.earliest_created_at,
-        });
-      } catch (error) {
-        // If session details can't be fetched, use basic info
-        console.warn(`Could not fetch session details for ${sessionId}:`, error);
-        sessions.push({
-          ...sessionData,
-          session_number: `SESSION-${sessionId.slice(0, 8)}`,
-          session_status: 'unknown',
-          session_opened_at: sessionData.earliest_created_at,
-        });
-      }
-    }
+    // Avoid one sequential query (including all order items) per tab. The board
+    // already has its orders and needs only three pieces of session metadata.
+    const summaries = await OrderSessionRepository.getBoardSummaries([...sessionMap.keys()]);
+    const summariesById = new Map(summaries.map((session) => [session.id, session]));
+    const sessions = [...sessionMap].map(([sessionId, sessionData]) => {
+      const sessionInfo = summariesById.get(sessionId);
+      return {
+        ...sessionData,
+        session_number: sessionInfo?.session_number || `SESSION-${sessionId.slice(0, 8)}`,
+        session_status: sessionInfo?.status || 'unknown',
+        session_opened_at: sessionInfo?.opened_at || sessionData.earliest_created_at,
+      };
+    });
 
     // Sort sessions by earliest order creation time (most recent first)
     sessions.sort((a, b) => 

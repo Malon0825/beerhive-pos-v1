@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useCoalescedRefresh } from '@/lib/hooks/useCoalescedRefresh';
 import { useRealtime } from '@/lib/hooks/useRealtime';
 import OrderBoardCard from './OrderBoardCard';
 import SessionBoardCard from './SessionBoardCard';
@@ -86,6 +87,8 @@ export default function OrderBoard() {
     }
   }, []);
 
+  const scheduleRefresh = useCoalescedRefresh(fetchOrders);
+
   /**
    * Handle real-time order updates
    */
@@ -93,8 +96,8 @@ export default function OrderBoard() {
     console.log('🔄 [OrderBoard] Order update received:', payload);
     
     // Refresh the entire order list to get updated data with relations
-    fetchOrders();
-  }, [fetchOrders]);
+    scheduleRefresh();
+  }, [scheduleRefresh]);
 
   /**
    * Handle real-time session updates
@@ -103,8 +106,8 @@ export default function OrderBoard() {
     console.log('🔄 [OrderBoard] Session update received:', payload);
     
     // Refresh to update session status
-    fetchOrders();
-  }, [fetchOrders]);
+    scheduleRefresh();
+  }, [scheduleRefresh]);
 
   /**
    * Subscribe to real-time order updates

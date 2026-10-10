@@ -9,6 +9,7 @@ import { OrderSession } from '@/models/entities/OrderSession';
 import { SessionStatus } from '@/models/enums/SessionStatus';
 import { formatCurrency } from '@/lib/utils/formatters';
 import { useRealtime } from '@/lib/hooks/useRealtime';
+import { useCoalescedRefresh } from '@/lib/hooks/useCoalescedRefresh';
 import { apiGet } from '@/lib/utils/apiClient';
 
 /**
@@ -44,6 +45,8 @@ export default function ActiveTabsDashboard() {
     }
   };
 
+  const scheduleTabsRefresh = useCoalescedRefresh(fetchActiveTabs);
+
   // Initial load
   useEffect(() => {
     fetchActiveTabs();
@@ -55,7 +58,7 @@ export default function ActiveTabsDashboard() {
     event: '*',
     onChange: () => {
       console.log('Session updated, refreshing...');
-      fetchActiveTabs();
+      scheduleTabsRefresh();
     },
   });
 
