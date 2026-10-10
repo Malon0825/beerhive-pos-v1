@@ -12,7 +12,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "test:usage": "node --test scripts/test-netlify-usage.cjs"
+    "test:usage": "node --test scripts/test-netlify-usage.cjs scripts/test-netlify-build-ignore.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",

@@ -90,3 +90,17 @@ also includes static assets and other traffic.
 
 No schema migration, pricing-plan change, or production deployment is required to
 review these changes. A deployment is required for them to affect the hosted app.
+
+## Production build guard repair
+
+The optimization PR's Netlify preview passed, but its production merge was
+canceled during initialization by the existing custom ignore command. Netlify
+reported `User-specified ignore command returned exit code 0`. On a fresh-cache
+build, Netlify sets `CACHED_COMMIT_REF` equal to `COMMIT_REF`, so the old diff
+incorrectly concluded that no release needed publishing.
+
+The ignore command now uses a dependency-free Node.js helper. Production builds
+always proceed. Previews retain documentation-only skipping when two distinct,
+valid commit references are available; missing/equal references and Git failures
+proceed with the build. Six regression tests cover these decisions. Production
+documentation-only commits will also build and can consume deployment credits.
