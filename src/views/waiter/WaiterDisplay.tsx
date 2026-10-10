@@ -7,6 +7,7 @@ import { KitchenOrderWithRelations } from '@/models/types/KitchenOrderWithRelati
 import { ReadyOrderCard } from './ReadyOrderCard';
 import { RefreshCw, CheckCircle, Clock, Volume2, VolumeX } from 'lucide-react';
 import { useToast } from '@/lib/hooks/useToast';
+import { useCoalescedRefresh } from '@/lib/hooks/useCoalescedRefresh';
 import { useStationNotification } from '@/lib/hooks/useStationNotification';
 import { useOrderAcknowledgment } from '@/lib/hooks/useOrderAcknowledgment';
 import { AudioEnablePrompt } from '@/components/station/AudioEnablePrompt';
@@ -85,6 +86,8 @@ export function WaiterDisplay() {
     }
   }, [toast]);
 
+  const scheduleOrdersRefresh = useCoalescedRefresh(fetchOrders);
+
   /**
    * Handle marking order as served
    */
@@ -149,8 +152,8 @@ export function WaiterDisplay() {
         async (payload) => {
           console.log('Waiter: Kitchen order update:', payload);
           
-          // Refetch orders on any change
-          await fetchOrders();
+          // Combine item events into one refresh without suppressing alerts.
+          scheduleOrdersRefresh();
           
           // Show robust notification for newly ready orders
           if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
@@ -194,7 +197,7 @@ export function WaiterDisplay() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchOrders, toast]);
+  }, [fetchOrders, toast, scheduleOrdersRefresh]);
 
   /**
    * Handle manual refresh

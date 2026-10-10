@@ -76,6 +76,30 @@ export class OrderSessionRepository {
     return session as OrderSession;
   }
 
+  /** Fetch only the metadata displayed on the order board, in one query. */
+  static async getBoardSummaries(sessionIds: string[]): Promise<
+    Pick<OrderSession, 'id' | 'session_number' | 'status' | 'opened_at'>[]
+  > {
+    if (sessionIds.length === 0) return [];
+
+    try {
+      const { data, error } = await supabaseAdmin
+        .from(this.TABLE)
+        .select('id, session_number, status, opened_at')
+        .in('id', [...new Set(sessionIds)]);
+
+      if (error) {
+        console.warn('Get order board session summaries error:', error);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.warn('Get order board session summaries error:', error);
+      return [];
+    }
+  }
+
   /**
    * Get active session for a table
    * @param tableId - Table ID

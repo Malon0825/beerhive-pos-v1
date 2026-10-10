@@ -396,18 +396,24 @@ export class StockDeduction {
         available: number;
       }> = [];
 
+      // Read fresh stock once per confirmation instead of waiting for a
+      // separate database round trip for every item. No stock is cached.
+      const productIds = [...new Set(orderItems
+        .map((item) => item.product_id)
+        .filter((id): id is string => Boolean(id)))];
+      if (productIds.length === 0) return { available: true, insufficientItems };
+
+      const { data: products, error } = await supabaseAdmin
+        .from('products')
+        .select('id, name, current_stock')
+        .in('id', productIds);
+      const productsById = new Map((products || []).map((product) => [product.id, product]));
+
       for (const item of orderItems) {
         if (!item.product_id) {
           console.log(`⏭️  [StockDeduction.checkStockAvailability] Skipping item without product_id`);
           continue;
         }
-
-        // Get product using server-side admin client (bypasses RLS)
-        const { data: product, error } = await supabaseAdmin
-          .from('products')
-          .select('id, name, current_stock')
-          .eq('id', item.product_id)
-          .single();
 
         if (error) {
           console.error(`❌ [StockDeduction.checkStockAvailability] Error fetching product ${item.product_id}:`, error);
@@ -419,6 +425,7 @@ export class StockDeduction {
           continue;
         }
 
+        const product = productsById.get(item.product_id);
         if (!product) {
           console.warn(`⚠️  [StockDeduction.checkStockAvailability] Product not found: ${item.product_id}`);
           insufficientItems.push({

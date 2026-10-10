@@ -6,6 +6,7 @@ import { KitchenOrderStatus } from '@/models/enums/KitchenOrderStatus';
 import { KitchenOrderWithRelations } from '@/models/types/KitchenOrderWithRelations';
 import { OrderCard } from '../kitchen/OrderCard';
 import { useToast } from '@/lib/hooks/useToast';
+import { useCoalescedRefresh } from '@/lib/hooks/useCoalescedRefresh';
 import { useStationNotification } from '@/lib/hooks/useStationNotification';
 import { useOrderAcknowledgment } from '@/lib/hooks/useOrderAcknowledgment';
 import { useOrderAgeAlert } from '@/lib/hooks/useOrderAgeAlert';
@@ -92,6 +93,8 @@ export function BartenderDisplay() {
     }
   }, [toast]);
 
+  const scheduleOrdersRefresh = useCoalescedRefresh(fetchOrders);
+
   /**
    * Handle status change for a bartender order
    */
@@ -171,8 +174,8 @@ export function BartenderDisplay() {
         async (payload) => {
           console.log('Bartender: Kitchen order update:', payload);
           
-          // Refetch orders on any change
-          await fetchOrders();
+          // Combine item events into one refresh without suppressing alerts.
+          scheduleOrdersRefresh();
           
           // Show robust notification for new orders
           if (payload.eventType === 'INSERT') {
@@ -216,7 +219,7 @@ export function BartenderDisplay() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchOrders, toast]);
+  }, [fetchOrders, toast, scheduleOrdersRefresh]);
 
   /**
    * Handle clear all cancelled orders

@@ -8,6 +8,7 @@ import { OrderCard } from './OrderCard';
 import { KitchenHeader } from './components/KitchenHeader';
 import { FilterTabs } from './components/FilterTabs';
 import { useToast } from '@/lib/hooks/useToast';
+import { useCoalescedRefresh } from '@/lib/hooks/useCoalescedRefresh';
 import { useStationNotification } from '@/lib/hooks/useStationNotification';
 import { useOrderAcknowledgment } from '@/lib/hooks/useOrderAcknowledgment';
 import { useOrderAgeAlert } from '@/lib/hooks/useOrderAgeAlert';
@@ -94,6 +95,8 @@ export function KitchenDisplay() {
     }
   }, [toast]);
 
+  const scheduleOrdersRefresh = useCoalescedRefresh(fetchOrders);
+
   /**
    * Handle status change for a kitchen order
    */
@@ -173,8 +176,9 @@ export function KitchenDisplay() {
         async (payload) => {
           console.log('Kitchen order realtime update:', payload);
           
-          // Refetch orders on any change
-          await fetchOrders();
+          // A batch of order items needs one queue refresh, while every new
+          // item still receives its existing sound/acknowledgment notification.
+          scheduleOrdersRefresh();
           
           // Show robust notification for new orders
           if (payload.eventType === 'INSERT') {
@@ -215,7 +219,7 @@ export function KitchenDisplay() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchOrders, toast]);
+  }, [fetchOrders, toast, scheduleOrdersRefresh]);
 
   /**
    * Handle manual refresh

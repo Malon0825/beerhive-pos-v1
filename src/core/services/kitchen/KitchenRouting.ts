@@ -186,7 +186,15 @@ export class KitchenRouting {
       // If it's a product, check its category
       if (orderItem.product_id) {
         console.log(`🔍 [KitchenRouting.determineDestination] Fetching product ${orderItem.product_id}...`);
-        const product: any = await ProductRepository.getById(orderItem.product_id);
+        // OrderRepository already joins category routing metadata. Reuse that
+        // server-loaded row, retaining the lookup for callers with bare items.
+        const loadedProduct = orderItem.product;
+        const hasRoutingData = loadedProduct?.id === orderItem.product_id
+          && typeof loadedProduct.name === 'string'
+          && Object.prototype.hasOwnProperty.call(loadedProduct, 'category');
+        const product: any = hasRoutingData
+          ? loadedProduct
+          : await ProductRepository.getById(orderItem.product_id);
         
         if (!product) {
           console.warn(`⚠️  [KitchenRouting.determineDestination] Product not found: ${orderItem.product_id}`);

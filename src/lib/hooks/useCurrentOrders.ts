@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRealtime } from './useRealtime';
+import { useCoalescedRefresh } from './useCoalescedRefresh';
 import { CurrentOrder, CurrentOrderItem } from '@/data/repositories/CurrentOrderRepository';
 
 /**
@@ -24,6 +25,10 @@ export function useCurrentOrders(cashierId: string) {
    * Fetch all current orders for this cashier
    */
   const fetchOrders = useCallback(async () => {
+    if (!cashierId) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const response = await fetch(`/api/current-orders?cashierId=${cashierId}`);
@@ -46,6 +51,8 @@ export function useCurrentOrders(cashierId: string) {
       setLoading(false);
     }
   }, [cashierId]);
+
+  const scheduleOrdersRefresh = useCoalescedRefresh(fetchOrders);
 
   /**
    * Create a new current order
@@ -338,7 +345,7 @@ export function useCurrentOrders(cashierId: string) {
     filter: `cashier_id=eq.${cashierId}`,
     onChange: (payload) => {
       console.log('Current order update received:', payload);
-      fetchOrders(); // Refetch on any change
+      scheduleOrdersRefresh();
     },
   });
 
@@ -349,7 +356,7 @@ export function useCurrentOrders(cashierId: string) {
     event: '*',
     onChange: (payload) => {
       console.log('Current order items update received:', payload);
-      fetchOrders(); // Refetch when items change
+      scheduleOrdersRefresh();
     },
   });
 
